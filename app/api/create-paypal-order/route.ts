@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import fetch from "node-fetch";
+import { auth } from "@clerk/nextjs";
 
 const PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com"; // Use sandbox for testing
 
@@ -17,6 +18,12 @@ async function getAccessToken() {
 }
 
 export async function POST(req: Request) {
+  // Check authentication
+  const { userId } = auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   if (req.method !== "POST") {
     return NextResponse.json({ error: "Method not allowed" }, { status: 405 });
   }
