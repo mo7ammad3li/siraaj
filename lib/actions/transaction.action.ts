@@ -1,45 +1,39 @@
-"use server";
-
-import { redirect } from 'next/navigation';
-import { handleError } from '../utils';
-import { connectToDatabase } from '../database/mongoose';
-import Transaction from '../database/models/transaction.model';
-import { updateCredits } from './user.actions';
-
-interface CheckoutTransactionParams {
-  plan: string;
-  amount: number;
-  credits: number;
-  buyerId: string;
-  promoCode?: string;
-}
-
-interface CreateTransactionParams extends CheckoutTransactionParams {
-  transactionId: string;
-}
+import paypalClient from '../paypal-client';
+import checkoutNodeJssdk from '@paypal/checkout-server-sdk';
 
 export async function checkoutCredits(transaction: CheckoutTransactionParams) {
-  // Placeholder for the actual PayPal transaction logic
-  const successUrl = `${process.env.NEXT_PUBLIC_SERVER_URL}/profile`;
-  const cancelUrl = `${process.env.NEXT_PUBLIC_SERVER_URL}/`;
-
-  // Simulate a successful PayPal transaction by redirecting to the success URL
-  redirect(successUrl);
-}
-
-export async function createTransaction(transaction: CreateTransactionParams) {
   try {
-    await connectToDatabase();
-
-    // Create a new transaction with a buyerId and promoCode
-    const newTransaction = await Transaction.create({
-      ...transaction, buyer: transaction.buyerId
+    const request = new checkoutNodeJssdk.orders.OrdersCreateRequest();
+    request.prefer("return=representation");
+    request.requestBody({
+      intent: 'CAPTURE',
+      purchase_units: [{
+        amount: {
+          currency_code: 'USD',
+          value: transaction.amount.toString()
+        },
+        description: `${transaction.credits} credits for ${transaction.plan} plan`,
+        custom_id: JSON.stringify({
+          plan: transaction.plan,
+          credits: transaction.credits,
+          buyerId: transaction.buyerId
+        })
+      }],
+      application_context: {
+        return_url: `${process.env.NEXT_PUBLIC_SERVER_URL}/success`,
+        cancel_url: `${process.env.NEXT_PUBLIC_SERVER_URL}/credits`
+      }
     });
 
-    await updateCredits(transaction.buyerId, transaction.credits);
-
-    return JSON.parse(JSON.stringify(newTransaction));
+    const order = await paypalClient.execute(request);
+    
+    if (order.result.id) {
+      return { orderId: order.result.id };
+    } else {
+      throw new Error('Failed to create PayPal order');
+    }
   } catch (error) {
-    handleError(error);
+    console.error('PayPal checkout error:', error);
+    throw error;
   }
 }
