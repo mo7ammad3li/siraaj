@@ -2,8 +2,6 @@
 
 import paypalClient from '../paypal-client';
 import checkoutNodeJssdk from '@paypal/checkout-server-sdk';
-"use server";
-
 import { redirect } from 'next/navigation';
 
 interface CheckoutTransactionParams {
