@@ -42,3 +42,6 @@ export async function initiateCheckout({
     throw error;
   }
 }
+
+// Rename checkoutCredits to initiateCheckout for consistency
+export const checkoutCredits = initiateCheckout;

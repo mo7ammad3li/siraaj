@@ -15,15 +15,15 @@ const Checkout: React.FC<CheckoutProps> = ({ plan, amount, credits, buyerId }) =
 
   const handleCheckout = async () => {
     try {
-      const result = await checkoutCredits({
+      const checkoutUrl = await checkoutCredits({
         plan,
         amount,
         credits,
         buyerId,
       });
       
-      if (result?.orderId) {
-        window.location.href = `https://www.paypal.com/checkoutnow?token=${result.orderId}`;
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl;
       } else {
         throw new Error('Failed to create PayPal order');
       }
