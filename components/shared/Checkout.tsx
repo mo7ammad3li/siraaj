@@ -12,8 +12,10 @@ interface CheckoutProps {
 
 const Checkout: React.FC<CheckoutProps> = ({ plan, amount, credits, buyerId }) => {
   const { toast } = useToast();
+  const [isLoading, setIsLoading] = React.useState(false);
 
   const handleCheckout = async () => {
+    setIsLoading(true);
     try {
       const checkoutUrl = await checkoutCredits({
         plan,
@@ -31,16 +33,22 @@ const Checkout: React.FC<CheckoutProps> = ({ plan, amount, credits, buyerId }) =
       console.error('Checkout error:', error);
       toast({
         title: "Checkout Error",
-        description: "An error occurred during checkout. Please try again.",
+        description: error instanceof Error ? error.message : "An error occurred during checkout. Please try again.",
         duration: 5000,
         variant: "destructive",
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <Button onClick={handleCheckout} className="w-full rounded bg-purple-600 text-white mt-2">
-      Checkout with PayPal
+    <Button 
+      onClick={handleCheckout} 
+      className="w-full rounded bg-purple-600 text-white mt-2"
+      disabled={isLoading}
+    >
+      {isLoading ? "Processing..." : "Checkout with PayPal"}
     </Button>
   );
 };

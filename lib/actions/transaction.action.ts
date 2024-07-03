@@ -31,11 +31,14 @@ export async function initiateCheckout({
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "Failed to create PayPal order");
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || `HTTP error! status: ${response.status}`);
     }
 
     const data = await response.json();
+    if (!data.approvalUrl) {
+      throw new Error("No approval URL returned from PayPal");
+    }
     return data.approvalUrl;
   } catch (error) {
     console.error("Error initiating checkout:", error);
@@ -43,5 +46,4 @@ export async function initiateCheckout({
   }
 }
 
-// Rename checkoutCredits to initiateCheckout for consistency
 export const checkoutCredits = initiateCheckout;
