@@ -6,7 +6,7 @@ import {
   PayPalButtons,
   PayPalScriptProvider,
 } from "@paypal/react-paypal-js";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "../ui/button";
 
 interface PromoCodes {
@@ -28,11 +28,20 @@ const Checkout = ({
   const [promoCode, setPromoCode] = useState("");
   const [discountedAmount, setDiscountedAmount] = useState(amount);
   const [isPromoCodeValid, setIsPromoCodeValid] = useState(true);
+  const [isPaypalScriptLoaded, setIsPaypalScriptLoaded] = useState(false);
 
   const promoCodes: PromoCodes = {
     DISCOUNT25: "https://www.sandbox.paypal.com/ncp/payment/F6JZVGEAL5L6C",
     // Add more promo codes and corresponding checkout links here
   };
+
+  useEffect(() => {
+    const clientId = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID;
+    console.log("PayPal Client ID:", clientId);
+
+    const sdkUrl = `https://www.paypal.com/sdk/js?client-id=${clientId}`;
+    console.log("PayPal SDK URL:", sdkUrl);
+  }, []);
 
   const handlePromoCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setPromoCode(e.target.value);
@@ -109,26 +118,31 @@ const Checkout = ({
             <PayPalScriptProvider
               options={{
                 clientId: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID!,
+                onLoad: () => setIsPaypalScriptLoaded(true),
               }}
             >
-              <PayPalButtons
-                fundingSource={FUNDING.PAYPAL}
-                createOrder={(data, actions) => {
-                  return actions.order.create({
-                    intent: "CAPTURE",
-                    purchase_units: [
-                      {
-                        amount: {
-                          currency_code: "USD",
-                          value: amount.toString(),
+              {isPaypalScriptLoaded ? (
+                <PayPalButtons
+                  fundingSource={FUNDING.PAYPAL}
+                  createOrder={(data, actions) => {
+                    return actions.order.create({
+                      intent: "CAPTURE",
+                      purchase_units: [
+                        {
+                          amount: {
+                            currency_code: "USD",
+                            value: discountedAmount.toString(),
+                          },
+                          custom_id: `${plan}|${credits}|${buyerId}`,
                         },
-                        custom_id: `${plan}|${credits}|${buyerId}`,
-                      },
-                    ],
-                  });
-                }}
-                onApprove={handleApprove}
-              />
+                      ],
+                    });
+                  }}
+                  onApprove={handleApprove}
+                />
+              ) : (
+                <p>Loading PayPal buttons...</p>
+              )}
             </PayPalScriptProvider>
           </>
         )}
