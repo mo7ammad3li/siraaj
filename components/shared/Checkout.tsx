@@ -120,7 +120,7 @@ const Checkout = ({
                       {
                         amount: {
                           currency_code: "USD",
-                          value: discountedAmount.toString(),
+                          value: amount.toString(),
                         },
                         custom_id: `${plan}|${credits}|${buyerId}`,
                       },
