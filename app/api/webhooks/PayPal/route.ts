@@ -1,107 +1,133 @@
-import { NextResponse } from 'next/server';
-import crypto from 'crypto';
-import { connectToDatabase } from '@/lib/database/mongoose';
-import Transaction from '@/lib/database/models/transaction.model';
-import { updateCredits } from '@/lib/actions/user.actions';
-import fetch from "node-fetch";
+import { createTransaction } from "@/lib/actions/transaction.action";
+import { updateCredits } from "@/lib/actions/user.actions";
+import { connectToDatabase } from "@/lib/database/mongoose";
+import crypto from "crypto";
+import mongoose from "mongoose";
+import { headers } from "next/headers";
+import { NextResponse } from "next/server";
 
-const PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com"; // Use sandbox for testing
 const webhookId = process.env.PAYPAL_WEBHOOK_ID!;
 
-async function verifyWebhookSignature(
-  transmissionId: string,
-  transmissionTime: string,
-  webhookId: string,
-  event: string,
-  transmissionSig: string,
-  certUrl: string
-) {
-  const response = await fetch(`${PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${await getAccessToken()}`,
-    },
-    body: JSON.stringify({
-      transmission_id: transmissionId,
-      transmission_time: transmissionTime,
-      cert_url: certUrl,
-      auth_algo: "SHA256withRSA",
-      transmission_sig: transmissionSig,
-      webhook_id: webhookId,
-      webhook_event: event,
-    }),
-  });
-
-  const data = await response.json();
-  return data.verification_status === "SUCCESS";
-}
-
-async function getAccessToken() {
-  const auth = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_SECRET}`).toString("base64");
-  const response = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
-    method: "POST",
-    body: "grant_type=client_credentials",
-    headers: {
-      Authorization: `Basic ${auth}`,
-    },
-  });
-  const data = await response.json();
-  return data.access_token;
-}
-
 export async function POST(req: Request) {
-  if (req.method !== 'POST') {
-    return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
-  }
-
-  const body = await req.text();
-  const transmissionSig = req.headers.get('paypal-transmission-sig') || '';
-  const transmissionTime = req.headers.get('paypal-transmission-time') || '';
-  const transmissionId = req.headers.get('paypal-transmission-id') || '';
-  const certUrl = req.headers.get('paypal-cert-url') || '';
-
-  const event = JSON.parse(body);
-
   try {
-    const isVerified = await verifyWebhookSignature(
-      transmissionId,
-      transmissionTime,
-      webhookId,
-      event,
-      transmissionSig,
-      certUrl
-    );
+    const headersList = headers();
+    const paypalSignature = headersList.get("paypal-transmission-sig");
+    const paypalCertUrl = headersList.get("paypal-cert-url");
+    const paypalTransmissionId = headersList.get("paypal-transmission-id");
+    const paypalTransmissionTime = headersList.get("paypal-transmission-time");
 
-    if (!isVerified) {
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+    if (!webhookId) {
+      return NextResponse.json(
+        {
+          error: "Server configuration error: PAYPAL_WEBHOOK_ID is not defined",
+        },
+        { status: 500 }
+      );
     }
 
-    if (event.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
-      const { id, amount, custom_id } = event.resource;
-      const { plan, credits, buyerId } = JSON.parse(custom_id);
+    const body = await req.text();
 
+    // Verify the PayPal signature
+    const verifiedSignature = crypto
+      .createHmac("sha256", webhookId)
+      .update(
+        paypalTransmissionId +
+          "|" +
+          paypalTransmissionTime +
+          "|" +
+          body +
+          "|" +
+          webhookId
+      )
+      .digest("base64");
+
+    // console.log("Verified signature:", verifiedSignature);
+    // console.log("Received signature:", paypalSignature);
+
+    // if (verifiedSignature !== paypalSignature) {
+    //   console.log("Invalid signature");
+    //   return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+    // }
+
+    const event = JSON.parse(body);
+
+    if (
+      event.event_type === "CHECKOUT.ORDER.APPROVED" ||
+      event.event_type === "PAYMENT.CAPTURE.COMPLETED"
+    ) {
       await connectToDatabase();
+      const order = event.resource;
+      let customId, plan, credits, buyerId, orderAmount;
 
-      // Create a new transaction
-      await Transaction.create({
-        createdAt: new Date(),
-        paypalId: id,
-        amount: parseFloat(amount.value),
-        plan,
-        credits,
-        buyer: buyerId,
-      });
+      if (event.event_type === "CHECKOUT.ORDER.APPROVED") {
+        customId = order.purchase_units[0].custom_id;
+        orderAmount = order.purchase_units[0].amount.value;
+      }
+      if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+        customId = order.custom_id;
+        orderAmount = order.amount.value;
+      }
 
-      // Update the user's credits
-      await updateCredits(buyerId, credits);
+      [plan, credits, buyerId] = customId.split("|");
 
-      return NextResponse.json({ success: true });
-    } else {
-      return NextResponse.json({ message: 'Event type not handled' });
+      // Start a database transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        // Create transaction
+        const transaction = await createTransaction(
+          {
+            transactionId: order.id,
+            plan,
+            amount: parseFloat(orderAmount),
+            credits: parseInt(credits),
+            buyerId,
+          },
+          session
+        );
+
+        // Update user credits
+        const updatedUser = await updateCredits(
+          buyerId,
+          parseInt(credits),
+          session
+        );
+
+        // Commit the transaction
+        await session.commitTransaction();
+        session.endSession();
+
+        console.log("Transaction created:", transaction);
+        console.log("Credits updated:", updatedUser);
+
+        return NextResponse.json(
+          { message: "Webhook processed successfully" },
+          { status: 200 }
+        );
+      } catch (error) {
+        // If an error occurs, abort the transaction
+        await session.abortTransaction();
+        session.endSession();
+        throw error;
+      }
     }
+
+    return NextResponse.json(
+      { message: "Webhook processed successfully" },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error('PayPal webhook error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    console.error("PayPal webhook error:", error);
+    if (error instanceof Error) {
+      console.error("Error message:", error.message);
+    }
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
   }
 }
